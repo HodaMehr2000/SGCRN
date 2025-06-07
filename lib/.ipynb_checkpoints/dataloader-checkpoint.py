@@ -51,8 +51,9 @@ def data_loader(X, Y, batch_size, shuffle=True, drop_last=True):
     X, Y = TensorFloat(X), TensorFloat(Y)
     dataset = torch.utils.data.TensorDataset(X, Y)
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
-# new
-def generate_adj_matrix_dagma(train_data, prediction_length=12, lambda1=0.02):
+
+# initial_embedding Dagma
+def generate_adj_matrix_dagma(train_data, prediction_length=1, lambda1=0.02):
     num_nodes = train_data.shape[1]
     W_est_all = np.zeros((num_nodes, num_nodes, prediction_length))
 
@@ -68,35 +69,10 @@ def generate_adj_matrix_dagma(train_data, prediction_length=12, lambda1=0.02):
     adj = np.any(adj_all, axis=2)
     return adj.astype(int)
 
-# this is updated into 3_phase method
-'''def generate_adj_matrix_dagma(train_data, prediction_length=12, lambda1=0.02):
-    num_nodes = train_data.shape[1]
-    W_est_all = np.zeros((num_nodes, num_nodes, prediction_length))
-    
-    # Extract Flow, Speed, and Congestion as combined features
-    traffic_flow = train_data[:, :, 0]
-    traffic_speed = train_data[:, :, 1]
-    traffic_congestion = train_data[:, :, 2]
-    
-    # Stack three-phase traffic features
-    train_data_combined = np.stack([traffic_flow, traffic_speed, traffic_congestion], axis=-1)
-    
-    for i in range(prediction_length):
-        X = train_data_combined[i::prediction_length]
-        X = X.reshape(X.shape[0], -1)  # Flatten across all features
-        model = DagmaLinear(loss_type='l2')
-        w_est = model.fit(X, lambda1=lambda1)
-        W_est_all[:, :, i] = w_est.reshape(num_nodes, num_nodes)
-    
-    adj_all = np.zeros(W_est_all.shape, dtype=int)
-    adj_all[W_est_all > 0] = 1
-    adj = np.any(adj_all, axis=2)
-    return adj.astype(int)
- '''   
 def generate_nmf_embeddings(adj_matrix, embedding_dim=10):
-    adj_matrix_non_negative = adj_matrix - adj_matrix.min()
-    nmf = NMF(n_components=embedding_dim, init='random', random_state=42, max_iter=10000)
-    embeddings = nmf.fit_transform(adj_matrix_non_negative)
+    adjacency_matrix_tensor = torch.tensor(adjacency_matrix, dtype=torch.float32)
+    m, p, n = torch.svd(adjacency_matrix_tensor)
+    embeddings = torch.mm(m[:, :d], torch.diag(p[:d] ** 0.5))
     return torch.tensor(embeddings, dtype=torch.float32)
 
 def get_dataloader(args, normalizer='std', tod=False, dow=False, weather=False, single=True):
