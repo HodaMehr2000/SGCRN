@@ -61,7 +61,7 @@ class SGCRN(nn.Module):
         # Predictor
         self.end_conv = nn.Conv2d(1, args.horizon * self.output_dim, kernel_size=(1, self.hidden_dim), bias=True)
 
-    def forward(self, source, targets, teacher_forcing_ratio=0.5):
+    def forward(self, source, targets = None, teacher_forcing_ratio=0.5):
         # source: B, T_1, N, D
         # target: B, T_2, N, D
         # supports = F.softmax(F.relu(torch.mm(self.nodevec1, self.nodevec1.transpose(0, 1))), dim=1)
@@ -76,38 +76,6 @@ class SGCRN(nn.Module):
         output = output.permute(0, 1, 3, 2)  # B, T, N, C
 
         return output
-
-    #     # Two Encoders for Residual Learning
-    #     self.encoder1 = AVWDCRNN(args.num_nodes, args.input_dim, args.rnn_units, args.cheb_k,
-    #                              args.embed_dim, args.num_layers)
-    #     self.encoder2 = AVWDCRNN(args.num_nodes, args.input_dim, args.rnn_units, args.cheb_k,
-    #                              args.embed_dim, args.num_layers)
-
-    #     # CNN-based Predictors
-    #     self.end_conv1 = nn.Conv2d(1, args.horizon * self.output_dim, kernel_size=(1, self.hidden_dim))
-    #     #self.end_conv2 = nn.Conv2d(1, args.horizon * self.output_dim, kernel_size=(1, 12))
-    #     self.end_conv2 = nn.Conv2d(1, args.horizon * self.output_dim, kernel_size=(1, min(12, self.hidden_dim)))
-    #     self.end_conv3 = nn.Conv2d(1, args.horizon * self.output_dim, kernel_size=(1, self.hidden_dim))
-
-    # def forward(self, source):
-    #     #  Encoder for Major Trend
-    #     init_state1 = self.encoder1.init_hidden(source.shape[0])
-    #     output1, _ = self.encoder1(source, init_state1, self.node_embeddings)
-    #     output1 = output1[:, -1:, :, :]
-    #     output1 = self.end_conv1(output1)
-
-    #     #  Compute Residual
-    #     source1 = self.end_conv2(output1.permute(0, 3, 2, 1))  # Reshape before Conv2D
-    #     source2 = source - source1  # Residual Component
-    #     #source2 = (1 - alpha) * (source - source1) + alpha * target  # combining residual and trend
-    #     # Step 3: Second Encoder for Residual Learning
-    #     init_state2 = self.encoder2.init_hidden(source2.shape[0])
-    #     output2, _ = self.encoder2(source2, init_state2, self.node_embeddings)
-    #     output2 = output2[:, -1:, :, :]
-    #     output2 = self.end_conv3(output2)
-
-    #     return output1 + output2
-
 
         
     def update_embeddings(self, new_embeddings):
