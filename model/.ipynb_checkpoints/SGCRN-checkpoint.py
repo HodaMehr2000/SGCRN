@@ -72,7 +72,7 @@ class SGCRN(nn.Module):
 
         # CNN-based predictor
         output = self.end_conv((output))  # B, T*C, N, 1
-        output = output.squeeze(-1).reshape(-1, self.horizon, self.output_dim, self.num_node)
+        output = output.squeeze(-1).reshape(-1, self.horizon, self.output_dim, self.num_nodes)
         output = output.permute(0, 1, 3, 2)  # B, T, N, C
 
         return output
