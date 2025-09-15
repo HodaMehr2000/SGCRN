@@ -1,25 +1,37 @@
 # SGCRN
-## Architecture Overview
+## Smart Graph Convolutional Recurrent Network
 
-This model initializes the graph adjacency matrix using DAGMA (leveraging causal priors instead of random initialization) and employs an adaptive graph structure that evolves during training.
+SGCRN is a traffic forecasting model that combines **causal graph initialization** (via DAGMA) with **adaptive spatiotemporal learning**.  
+Unlike models that start from random adjacency matrices, SGCRN uses causal priors to improve convergence, robustness, and interpretability.
 
-## Structure:
+---
 
-* data: including PEMSD4 and PEMSD8 dataset used in our experiments, which are released by and available at  [ASTGCN](https://github.com/Davidham3/ASTGCN/tree/master/data).
+## Repository Structure
 
-* lib: contains self-defined modules for our work, such as data loading, data pre-process, normalization, and evaluate metrics.
+- **data/**  
+  Benchmark datasets (**PEMSD4** and **PEMSD8**) used in our experiments.  
+  Original datasets are available from [ASTGCN](https://github.com/Davidham3/ASTGCN/tree/master/data).
 
-* model: implementation of our SGCRN model
+- **lib/**  
+  Utility modules for dataset loading, preprocessing, normalization, and evaluation metrics.
+
+- **model/**  
+  Implementation of the SGCRN architecture.
+
+- **run/**  
+  Example scripts to reproduce experiments or run SGCRN on custom datasets.
+
+---
 
 ## Requirements
 
-Python 3.11.10, Pytorch 2.2.1, Numpy 1.24.4, Dagma 1.1.1, argparse and configparser
+- Python 3.11.10  
+- PyTorch 2.2.1  
+- NumPy 1.24.4  
+- DAGMA 1.1.1  
+- argparse  
+- configparser  
 
-
-
-To replicate the results on PEMSD4 and PEMSD8 datasets, you can run the codes in the **run** file directly.
-If you want to use the model for your own dataset, please load your dataset by checking "load_dataset" in the **lib** folder and remember to set the learning rate and embedding dimensions.
-
-
-
-
+Install all dependencies:
+```bash
+pip install -r requirements.txt
