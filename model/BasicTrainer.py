@@ -8,7 +8,7 @@ import importlib.util
 import csv
 from lib.logger import get_logger
 from lib.metrics import All_Metrics
- import matplotlib.pyplot as plt  # noqa: WPS433 - optional visualisation
+import matplotlib.pyplot as plt  # noqa: WPS433 - optional visualisation
 
 class Trainer:
     def __init__(self, model, loss, optimizer, train_loader, val_loader, test_loader,
