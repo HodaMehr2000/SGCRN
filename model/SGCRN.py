@@ -97,10 +97,12 @@ class SGCRN(nn.Module):
             print("Node embeddings are now frozen.")
             
     def get_adaptive_adj(self):
-    """Return the adaptive adjacency matrix learned from the node embeddings."""
-    with torch.no_grad():
-        supports = torch.mm(self.node_embeddings, self.node_embeddings.transpose(0, 1))
-        supports = F.relu(supports)
-        supports = F.softmax(supports, dim=1)
-    return supports
+        """
+        Return the adaptive adjacency matrix learned from the node embeddings.
+        """
+        with torch.no_grad():
+            supports = torch.mm(self.node_embeddings, self.node_embeddings.transpose(0, 1))
+            supports = F.relu(supports)
+            supports = F.softmax(supports, dim=1)
+        return supports
 
