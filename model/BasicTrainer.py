@@ -8,7 +8,7 @@ import importlib.util
 import csv
 from lib.logger import get_logger
 from lib.metrics import All_Metrics
-from model.SGCRN import get_adaptive_adj
+from model.SGCRN import SGCRN
 import matplotlib.pyplot as plt  # noqa: WPS433 - optional visualisation
 
 class Trainer:
