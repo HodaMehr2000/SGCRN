@@ -4,9 +4,11 @@ import os
 import time
 import copy
 import numpy as np
+import importlib.util
 import csv
 from lib.logger import get_logger
 from lib.metrics import All_Metrics
+ import matplotlib.pyplot as plt  # noqa: WPS433 - optional visualisation
 
 class Trainer:
     def __init__(self, model, loss, optimizer, train_loader, val_loader, test_loader,
@@ -33,6 +35,7 @@ class Trainer:
         self.logger.info(f"Experiment log path in: {args.log_dir}")
 
         self.metrics_path = os.path.join(self.args.log_dir, "training_metrics.csv")
+        self.best_path = os.path.join(self.args.log_dir, "best_model.pth")
         # # Logging setup
         # if not os.path.isdir(args.log_dir) and not args.debug:
         #     os.makedirs(args.log_dir, exist_ok=True)
@@ -236,9 +239,13 @@ class Trainer:
                 self.logger.info(f"Best model saved at {self.best_path}")
 
         # Load the best model for testing
-        self.model.load_state_dict(best_model)
-        self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
-        
+        #self.model.load_state_dict(best_model)
+        #self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
+            self.model.load_state_dict(best_model)
+            self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
+            self._export_learned_graph()
+        else:
+            self.logger.warning("No best model was captured during training; skipping export.")
     def save_checkpoint(self):
         state = {
             'state_dict': self.model.state_dict(),
@@ -292,4 +299,31 @@ class Trainer:
     @staticmethod
     def _compute_sampling_threshold(global_step, k):
         return k / (k + math.exp(global_step / k))
+        
+    def _export_learned_graph(self):
+    if not hasattr(self.model, "get_adaptive_adj"):
+        self.logger.warning("Model does not expose an adaptive graph; skipping export.")
+        return
 
+    learned_adj = self.model.get_adaptive_adj().detach().cpu().numpy()
+    graph_path = os.path.join(self.args.log_dir, "adaptive_graph.npy")
+    np.save(graph_path, learned_adj)
+    self.logger.info(f"Saved learned adaptive graph to {graph_path}")
+
+    heatmap_path = os.path.join(self.args.log_dir, "adaptive_graph_heatmap.png")
+    if importlib.util.find_spec("matplotlib") is None:
+        self.logger.warning("matplotlib not available; skipping heatmap export.")
+        return
+
+   
+
+    plt.figure(figsize=(8, 6))
+    im = plt.imshow(learned_adj, cmap="viridis")
+    plt.title("Learned Adaptive Graph")
+    plt.xlabel("Target Node")
+    plt.ylabel("Source Node")
+    plt.colorbar(im, fraction=0.046, pad=0.04)
+    plt.tight_layout()
+    plt.savefig(heatmap_path, dpi=300)
+    plt.close()
+    self.logger.info(f"Saved adaptive graph heatmap to {heatmap_path}")
