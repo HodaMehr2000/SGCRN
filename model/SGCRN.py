@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from model.SGCRNCell import AGCRNCell
+import torch.nn.functional as F
 
 class AVWDCRNN(nn.Module):
     def __init__(self, node_num, dim_in, dim_out, cheb_k, embed_dim, num_layers=1):
@@ -94,3 +95,12 @@ class SGCRN(nn.Module):
             print("Node embeddings are now trainable.")
         else:
             print("Node embeddings are now frozen.")
+            
+    def get_adaptive_adj(self):
+    """Return the adaptive adjacency matrix learned from the node embeddings."""
+    with torch.no_grad():
+        supports = torch.mm(self.node_embeddings, self.node_embeddings.transpose(0, 1))
+        supports = F.relu(supports)
+        supports = F.softmax(supports, dim=1)
+    return supports
+
