@@ -301,8 +301,8 @@ class Trainer:
         return k / (k + math.exp(global_step / k))
         
     def _export_learned_graph(self):
-    if not hasattr(self.model, "get_adaptive_adj"):
-        self.logger.warning("Model does not expose an adaptive graph; skipping export.")
+        if not hasattr(self.model, "get_adaptive_adj"):
+            self.logger.warning("Model does not expose an adaptive graph; skipping export.")
         return
 
     learned_adj = self.model.get_adaptive_adj().detach().cpu().numpy()
