@@ -303,17 +303,17 @@ class Trainer:
     def _export_learned_graph(self):
         if not hasattr(self.model, "get_adaptive_adj"):
             self.logger.warning("Model does not expose an adaptive graph; skipping export.")
-        return
+            return
 
-    learned_adj = self.model.get_adaptive_adj().detach().cpu().numpy()
-    graph_path = os.path.join(self.args.log_dir, "adaptive_graph.npy")
-    np.save(graph_path, learned_adj)
-    self.logger.info(f"Saved learned adaptive graph to {graph_path}")
+        learned_adj = self.model.get_adaptive_adj().detach().cpu().numpy()
+        graph_path = os.path.join(self.args.log_dir, "adaptive_graph.npy")
+        np.save(graph_path, learned_adj)
+        self.logger.info(f"Saved learned adaptive graph to {graph_path}")
 
-    heatmap_path = os.path.join(self.args.log_dir, "adaptive_graph_heatmap.png")
-    if importlib.util.find_spec("matplotlib") is None:
-        self.logger.warning("matplotlib not available; skipping heatmap export.")
-        return
+        heatmap_path = os.path.join(self.args.log_dir, "adaptive_graph_heatmap.png")
+        if importlib.util.find_spec("matplotlib") is None:
+            self.logger.warning("matplotlib not available; skipping heatmap export.")
+            return
 
    
 
