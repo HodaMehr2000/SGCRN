@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import torch.utils.data
+from typing import Iterable, List, Sequence, Tuple
 from dagma.linear import DagmaLinear
 from sklearn.decomposition import NMF
 from lib.add_window import Add_Window_Horizon
