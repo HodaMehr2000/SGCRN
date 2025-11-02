@@ -11,6 +11,7 @@ from lib.metrics import All_Metrics
 from model.SGCRN import SGCRN
 import matplotlib.pyplot as plt  # noqa: WPS433 - optional visualisation
 
+
 class Trainer:
     def __init__(self, model, loss, optimizer, train_loader, val_loader, test_loader,
                  scaler, args, lr_scheduler=None):
@@ -24,134 +25,160 @@ class Trainer:
         self.scaler = scaler
         self.args = args
         self.lr_scheduler = lr_scheduler
-        
-        self.train_per_epoch = len(train_loader) if train_loader else 0  # ✅ Ensures it’s never undefined
 
+        # Safe guard for empty loaders
+        self.train_per_epoch = len(train_loader) if train_loader else 0
 
-
+        # Logging dirs
         if not os.path.exists(self.args.log_dir):
-            os.makedirs(self.args.log_dir, exist_ok=True)  
+            os.makedirs(self.args.log_dir, exist_ok=True)
 
         self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug)
         self.logger.info(f"Experiment log path in: {args.log_dir}")
 
         self.metrics_path = os.path.join(self.args.log_dir, "training_metrics.csv")
         self.best_path = os.path.join(self.args.log_dir, "best_model.pth")
-        # # Logging setup
-        # if not os.path.isdir(args.log_dir) and not args.debug:
-        #     os.makedirs(args.log_dir, exist_ok=True)
-        # self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug)
-        # self.logger.info(f"Experiment log path in: {args.log_dir}")
 
-
+        # internal state for CSV header handling
+        self._metrics_header_written = False
 
     def val_epoch(self, epoch, val_dataloader):
         start_time = time.time()
         self.model.eval()
-        total_val_loss = 0
+        total_val_loss = 0.0
         y_pred = []
         y_true = []
-    
+
+        if not val_dataloader or len(val_dataloader) == 0:
+            self.logger.warning("Validation dataloader is empty; skipping validation epoch.")
+            self.val_mae = self.val_rmse = self.val_mape = float("nan")
+            self.val_time = 0.0
+            return float("inf")
+
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(val_dataloader):
                 data = data[..., :self.args.input_dim]
                 label = target[..., :self.args.output_dim]
-    
-                #  residual decomposition output
+
                 output = self.model(data)
-                #output = output1 + output2  # Sum major trend and residual
-    
+
                 y_true.append(label)
                 y_pred.append(output)
-    
+
+                label_for_loss = label
                 if self.args.real_value:
-                    label = self.scaler.inverse_transform(label)
-                loss = self.loss(output, label)
+                    label_for_loss = self.scaler.inverse_transform(label)
+                loss = self.loss(output, label_for_loss)
                 if not torch.isnan(loss).any():
                     total_val_loss += loss.item()
-    
-        val_loss = total_val_loss / len(val_dataloader)
+
+        val_loss = total_val_loss / max(1, len(val_dataloader))
+
+        # Metrics in real space
         y_true = self.scaler.inverse_transform(torch.cat(y_true, dim=0))
-        y_pred = torch.cat(y_pred, dim=0) if self.args.real_value else self.scaler.inverse_transform(torch.cat(y_pred, dim=0))
-    
-        mae, rmse, mape, _, _ = All_Metrics(y_pred, y_true, self.args.mae_thresh, self.args.mape_thresh)
+        y_pred_cat = torch.cat(y_pred, dim=0)
+        y_pred_real = y_pred_cat if self.args.real_value else self.scaler.inverse_transform(y_pred_cat)
+
+        mae, rmse, mape, _, _ = All_Metrics(y_pred_real, y_true, self.args.mae_thresh, self.args.mape_thresh)
         epoch_duration = time.time() - start_time
         self.val_mae = mae
         self.val_rmse = rmse
         self.val_mape = mape
         self.val_time = epoch_duration
-        self.logger.info(f"Validation Epoch {epoch}: average Loss: {val_loss:.6f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, MAPE: {mape:.4f}, Time: {epoch_duration:.2f} seconds")
+        self.logger.info(
+            f"Validation Epoch {epoch}: average Loss: {val_loss:.6f}, "
+            f"MAE: {mae:.4f}, RMSE: {rmse:.4f}, MAPE: {mape:.4f}, "
+            f"Time: {epoch_duration:.2f} seconds"
+        )
         return val_loss
 
     def train_epoch(self, epoch):
         start_time = time.time()
         self.model.train()
-        total_loss = 0
+        total_loss = 0.0
         y_pred = []
         y_true = []
-    
+
+        if self.train_per_epoch == 0:
+            self.logger.warning("Train dataloader is empty; skipping train epoch.")
+            self.train_mae = self.train_rmse = self.train_mape = float("nan")
+            self.train_time = 0.0
+            return 0.0
+
         for batch_idx, (data, target) in enumerate(self.train_loader):
             data = data[..., :self.args.input_dim]
             label = target[..., :self.args.output_dim]
             self.optimizer.zero_grad()
-    
-            if self.args.teacher_forcing:
+
+            if getattr(self.args, "teacher_forcing", False):
                 global_step = (epoch - 1) * self.train_per_epoch + batch_idx
                 teacher_forcing_ratio = self._compute_sampling_threshold(global_step, self.args.tf_decay_steps)
             else:
                 teacher_forcing_ratio = 1.0
-    
-            #  residual decomposition output
+
+            # Forward
             output = self.model(data)
-            #output = output1 + output2  # Sum major trend and residual
-    
-            # Debugging residual values
-            #print(f"[DEBUG] output1 mean: {output1.mean().item()}, output2 mean: {output2.mean().item()}")
-    
+
+            # Collect for metrics
             y_true.append(label)
             y_pred.append(output)
-    
+
+            # Loss (optionally compute against inverse-transformed labels)
+            label_for_loss = label
             if self.args.real_value:
-                label = self.scaler.inverse_transform(label)
-            loss = self.loss(output, label)
+                label_for_loss = self.scaler.inverse_transform(label)
+
+            loss = self.loss(output, label_for_loss)
             loss.backward()
-    
-            if self.args.grad_norm:
+
+            if getattr(self.args, "grad_norm", False):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+
             self.optimizer.step()
             total_loss += loss.item()
-    
+
             if batch_idx % self.args.log_step == 0:
-                self.logger.info(f"Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} Loss: {loss.item():.6f}")
-    
-        train_epoch_loss = total_loss / self.train_per_epoch
+                self.logger.info(
+                    f"Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} "
+                    f"Loss: {loss.item():.6f}"
+                )
+
+        train_epoch_loss = total_loss / max(1, self.train_per_epoch)
+
+        # Metrics in real space
         y_true = self.scaler.inverse_transform(torch.cat(y_true, dim=0))
-        y_pred = torch.cat(y_pred, dim=0) if self.args.real_value else self.scaler.inverse_transform(torch.cat(y_pred, dim=0))
-    
-        mae, rmse, mape, _, _ = All_Metrics(y_pred, y_true, self.args.mae_thresh, self.args.mape_thresh)
+        y_pred_cat = torch.cat(y_pred, dim=0)
+        y_pred_real = y_pred_cat if self.args.real_value else self.scaler.inverse_transform(y_pred_cat)
+
+        mae, rmse, mape, _, _ = All_Metrics(y_pred_real, y_true, self.args.mae_thresh, self.args.mape_thresh)
         epoch_duration = time.time() - start_time
         self.train_mae = mae
         self.train_rmse = rmse
         self.train_mape = mape
         self.train_time = epoch_duration
-        self.logger.info(f"Train Epoch {epoch}: averaged Loss: {train_epoch_loss:.6f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, MAPE: {mape:.4f}, tf_ratio: {teacher_forcing_ratio:.6f}, Time: {epoch_duration:.2f} seconds")
-    
-        if self.args.lr_decay:
+
+        self.logger.info(
+            f"Train Epoch {epoch}: averaged Loss: {train_epoch_loss:.6f}, "
+            f"MAE: {mae:.4f}, RMSE: {rmse:.4f}, MAPE: {mape:.4f}, "
+            f"tf_ratio: {teacher_forcing_ratio:.6f}, Time: {epoch_duration:.2f} seconds"
+        )
+
+        if getattr(self.args, "lr_decay", False) and self.lr_scheduler is not None:
             self.lr_scheduler.step()
         return train_epoch_loss
 
     def log_gpu_memory(self, epoch):
         if torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / (1024 ** 3)  # Convert to GB
-            reserved = torch.cuda.memory_reserved() / (1024 ** 3)  # Convert to GB
-            self.logger.info(f"Epoch {epoch}: GPU Memory Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+            allocated = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+            reserved = torch.cuda.memory_reserved() / (1024 ** 3)    # GB
+            self.logger.info(
+                f"Epoch {epoch}: GPU Memory Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB"
+            )
 
     def train(self):
         best_model = None
         best_loss = float('inf')
         not_improved_count = 0
-        metrics_path = os.path.join(self.args.log_dir, "training_metrics.csv")
-        headers_written = False
 
         for epoch in range(1, self.args.epochs + 1):
             epoch_start_time = time.time()
@@ -168,56 +195,38 @@ class Trainer:
             # Log GPU memory usage
             self.log_gpu_memory(epoch)
 
-            # Prepare and save metrics
-            metrics = {
-                "epoch": epoch,
-                "train": {
-                    "loss": train_epoch_loss,
-                    "mae": self.train_mae,
-                    "rmse": self.train_rmse,
-                    "mape": self.train_mape,
-                    "time": self.train_time
-                },
-                "validation": {
-                    "loss": val_epoch_loss,
-                    "mae": self.val_mae,
-                    "rmse": self.val_rmse,
-                    "mape": self.val_mape,
-                    "time": self.val_time
-                }
-            }
-
+            # Prepare and save flattened metrics
             flattened_metrics = {
-                "epoch": metrics["epoch"],
-                "train_loss": metrics["train"]["loss"],
-                "train_mae": metrics["train"]["mae"],
-                "train_rmse": metrics["train"]["rmse"],
-                "train_mape": metrics["train"]["mape"],
-                "train_time": metrics["train"]["time"],
-                "val_loss": metrics["validation"]["loss"],
-                "val_mae": metrics["validation"]["mae"],
-                "val_rmse": metrics["validation"]["rmse"],
-                "val_mape": metrics["validation"]["mape"],
-                "val_time": metrics["validation"]["time"]
+                "epoch": epoch,
+                "train_loss": train_epoch_loss,
+                "train_mae": getattr(self, "train_mae", float("nan")),
+                "train_rmse": getattr(self, "train_rmse", float("nan")),
+                "train_mape": getattr(self, "train_mape", float("nan")),
+                "train_time": getattr(self, "train_time", float("nan")),
+                "val_loss": val_epoch_loss,
+                "val_mae": getattr(self, "val_mae", float("nan")),
+                "val_rmse": getattr(self, "val_rmse", float("nan")),
+                "val_mape": getattr(self, "val_mape", float("nan")),
+                "val_time": getattr(self, "val_time", float("nan")),
             }
 
-            with open(metrics_path, mode='a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=flattened_metrics.keys())
-                if not headers_written:
+            # Append metrics to CSV (write header once)
+            with open(self.metrics_path, mode='a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=list(flattened_metrics.keys()))
+                if not self._metrics_header_written or (os.path.getsize(self.metrics_path) == 0):
                     writer.writeheader()
-                    headers_written = True
+                    self._metrics_header_written = True
                 writer.writerow(flattened_metrics)
 
-            # Clear memory to avoid GPU issues
-            del metrics, flattened_metrics
+            # Clear memory
+            del flattened_metrics
             torch.cuda.empty_cache()
 
             # Log epoch time
-            epoch_end_time = time.time()
-            epoch_duration = epoch_end_time - epoch_start_time
+            epoch_duration = time.time() - epoch_start_time
             self.logger.info(f"Epoch {epoch} completed in {epoch_duration:.2f} seconds")
 
-            # Save best model
+            # Save best model (by val loss)
             if val_epoch_loss < best_loss:
                 best_loss = val_epoch_loss
                 not_improved_count = 0
@@ -227,26 +236,28 @@ class Trainer:
                 not_improved_count += 1
 
             # Early stopping
-            if self.args.early_stop and not_improved_count >= self.args.early_stop_patience:
-                self.logger.info(f"Validation performance didn't improve for {self.args.early_stop_patience} epochs. Stopping...")
+            if getattr(self.args, "early_stop", False) and \
+               not_improved_count >= self.args.early_stop_patience:
+                self.logger.info(
+                    f"Validation performance didn't improve for "
+                    f"{self.args.early_stop_patience} epochs. Stopping..."
+                )
                 break
 
-        self.logger.info(f"Metrics saved to {metrics_path}")
+        self.logger.info(f"Metrics saved to {self.metrics_path}")
 
-        # Save the best model
+        # Save and evaluate best model
         if best_model:
             if not self.args.debug:
                 torch.save(best_model, self.best_path)
                 self.logger.info(f"Best model saved at {self.best_path}")
 
-        # Load the best model for testing
-        #self.model.load_state_dict(best_model)
-        #self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
             self.model.load_state_dict(best_model)
             self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
             self._export_learned_graph()
         else:
             self.logger.warning("No best model was captured during training; skipping export.")
+
     def save_checkpoint(self):
         state = {
             'state_dict': self.model.state_dict(),
@@ -271,60 +282,69 @@ class Trainer:
                 data = data[..., :args.input_dim]
                 label = target[..., :args.output_dim]
 
-
                 output = model(data)
                 if output is None or output.numel() == 0:
-                    #print(f"[ERROR] Model returned an empty tensor at batch {batch_idx}")
-                    continue  # رد کردن این batch
+                    continue
 
                 y_true.append(label)
                 y_pred.append(output)
 
         if len(y_true) == 0 or len(y_pred) == 0:
-            #print("[ERROR] No valid predictions collected in test()!")
+            logger.error("No valid predictions collected in test()!")
             return float('inf')
 
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0))
-        y_pred = torch.cat(y_pred, dim=0) if args.real_value else scaler.inverse_transform(torch.cat(y_pred, dim=0))
+        y_pred_cat = torch.cat(y_pred, dim=0)
+        y_pred_real = y_pred_cat if args.real_value else scaler.inverse_transform(y_pred_cat)
 
         np.save(f"./{args.dataset}_true.npy", y_true.cpu().numpy())
-        np.save(f"./{args.dataset}_pred.npy", y_pred.cpu().numpy())
+        np.save(f"./{args.dataset}_pred.npy", y_pred_real.cpu().numpy())
 
         for t in range(y_true.shape[1]):
-            mae, rmse, mape, _, _ = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh, args.mape_thresh)
+            mae, rmse, mape, _, _ = All_Metrics(
+                y_pred_real[:, t, ...], y_true[:, t, ...], args.mae_thresh, args.mape_thresh
+            )
             logger.info(f"Horizon {t + 1:02d}: MAE: {mae:.2f}, RMSE: {rmse:.2f}, MAPE: {mape:.4f}%")
 
-        mae, rmse, mape, _, _ = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
+        mae, rmse, mape, _, _ = All_Metrics(
+            y_pred_real, y_true, args.mae_thresh, args.mape_thresh
+        )
         logger.info(f"Average Horizon: MAE: {mae:.2f}, RMSE: {rmse:.2f}, MAPE: {mape:.4f}%")
 
     @staticmethod
     def _compute_sampling_threshold(global_step, k):
         return k / (k + math.exp(global_step / k))
-        
+
     def _export_learned_graph(self):
+        """
+        Export the learned adaptive graph as .npy and a heatmap PNG.
+        Requires model to implement .get_adaptive_adj().
+        """
         if not hasattr(self.model, "get_adaptive_adj"):
             self.logger.warning("Model does not expose an adaptive graph; skipping export.")
             return
 
-        learned_adj = self.model.get_adaptive_adj().detach().cpu().numpy()
+        # Save matrix
+        with torch.no_grad():
+            learned_adj = self.model.get_adaptive_adj().detach().cpu().numpy()
+
         graph_path = os.path.join(self.args.log_dir, "adaptive_graph.npy")
         np.save(graph_path, learned_adj)
         self.logger.info(f"Saved learned adaptive graph to {graph_path}")
 
-        heatmap_path = os.path.join(self.args.log_dir, "adaptive_graph_heatmap.png")
+        # Save heatmap (if matplotlib is available)
         if importlib.util.find_spec("matplotlib") is None:
             self.logger.warning("matplotlib not available; skipping heatmap export.")
             return
 
-   
-
-    plt.figure(figsize=(8, 6))
-    im = plt.imshow(learned_adj, cmap="viridis")
-    plt.title("Learned Adaptive Graph")
-    plt.xlabel("Target Node")
-    plt.ylabel("Source Node")
-    plt.colorbar(im, fraction=0.046, pad=0.04)
-    plt.tight_layout()
-    plt.savefig(heatmap_path, dpi=300)
-    plt.close()
-    self.logger.info(f"Saved adaptive graph heatmap to {heatmap_path}")
+        heatmap_path = os.path.join(self.args.log_dir, "adaptive_graph_heatmap.png")
+        plt.figure(figsize=(8, 6))
+        im = plt.imshow(learned_adj, cmap="viridis")
+        plt.title("Learned Adaptive Graph")
+        plt.xlabel("Target Node")
+        plt.ylabel("Source Node")
+        plt.colorbar(im, fraction=0.046, pad=0.04)
+        plt.tight_layout()
+        plt.savefig(heatmap_path, dpi=300)
+        plt.close()
+        self.logger.info(f"Saved adaptive graph heatmap to {heatmap_path}")
